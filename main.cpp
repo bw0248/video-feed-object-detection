@@ -21,25 +21,45 @@ const std::string MODEL_WEIGHTS =  "./darknet/yolov3-tiny.weights";
 const int FRAME_WIDTH = 640;
 const int FRAME_HEIGHT = 480;
 
+constexpr float CONFIDENCE_THRESHOLD = 0;
+constexpr float NMS_THRESHOLD = 0.4;
+constexpr int NUM_CLASSES = 80;
+
+const cv::Scalar colors[] = {
+    {0, 255, 255},
+    {255, 255, 0},
+    {0, 255, 0},
+    {255, 0, 0}
+};
+
+const auto NUM_COLORS = sizeof(colors)/sizeof(colors[0]);
+
+
 int main() {
     float confThreshold = 0.5;
     float nmsThreshold = 0.4;
     
     std::vector<std::string> classes;
 
-    std::string classesFile = "coco.names";
+    std::string classesFile = "./darknet/data/coco.names";
     std::ifstream ifs(classesFile.c_str());
     std::string line;
     while (getline(ifs, line)) { classes.push_back(line); }
+
+    std::cout << "read " << classes.size() << " labels" << std::endl;
     
     std::cout << "config: " << MODEL_CONFIG << std::endl;
     std::cout << "weights: " << MODEL_WEIGHTS << std::endl;
 
     cv::dnn::Net net = cv::dnn::readNetFromDarknet(MODEL_CONFIG, MODEL_WEIGHTS);
-    net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
-    net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+    //net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
+    //net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
 
-    cv::VideoCapture cam(2);
+    // try to use gpu
+    net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
+    net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
+
+    cv::VideoCapture cam(0);
     if(!cam.isOpened()) { exit(1); }
     cam.set(cv::CAP_PROP_FRAME_WIDTH, FRAME_WIDTH);
     cam.set(cv::CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT);
@@ -73,36 +93,97 @@ int main() {
         return -1;                                                              
     }  
 
-    
+    auto outputNames = net.getUnconnectedOutLayersNames();
     auto frameStart = std::chrono::high_resolution_clock::now();
+    cv::Mat frame;
+    cv::Mat blob;
+    std::vector<cv::Mat> detections;
     while (1) {
-        cv::Mat frame;
+        //cv::Mat frame;
         cam >> frame;
         //std::cout << "dims: (" << width << "|" << height << ")" << std::endl; 
 
-        static cv::Mat blob;
+        //static cv::Mat blob;
         cv::dnn::blobFromImage(
                 frame, 
                 blob, 
-                1/255.0,
+                0.00392,
                 cv::Size(FRAME_WIDTH, FRAME_HEIGHT),
                 cv::Scalar(0, 0, 0),
                 true,
-                false
+                false,
+		CV_32F
         );
 
         // propagate through network
         net.setInput(blob);
-        std::vector<cv::Mat> outVector;
-        net.forward(outVector, net.getUnconnectedOutLayersNames());
+        net.forward(detections, outputNames);
 
-        //// annotate bbs
-        //int numRowsDetection = outVector.rows;  // number of detected objects
-        //int objInfo = outVector.cols;   // [x, y, w, h, class 1, class 2, ...]
 
-        //for (int i = 0; i < numRowsDetection; i++) {
-        //    Mat scores = outVector.row(
-        //}
+        std::vector<int> indices[NUM_CLASSES];
+        std::vector<cv::Rect> boxes[NUM_CLASSES];
+        std::vector<float> scores[NUM_CLASSES];
+
+	for (auto& output: detections) {
+		const auto num_boxes = output.rows;
+		for (int i = 0; i < num_boxes; i++) {
+			auto x = output.at<float>(i, 0) * frame.cols;
+			auto y = output.at<float>(i, 1) * frame.rows;
+			auto width = output.at<float>(i, 2) * frame.cols;
+			auto height = output.at<float>(i, 3) * frame.rows;
+			cv::Rect rect(x - width/2, y - height/2, width, height);
+
+			for (int c = 0; c < NUM_CLASSES; c++)
+			{
+				auto confidence = *output.ptr<float>(i, 5 + c);
+				if (confidence >= CONFIDENCE_THRESHOLD)
+				{
+					boxes[c].push_back(rect);
+					scores[c].push_back(confidence);
+				}
+			}
+		}
+	}
+
+	for (int c = 0; c < NUM_CLASSES; c++) {
+		cv::dnn::NMSBoxes(boxes[c], scores[c], 0.0, NMS_THRESHOLD, indices[c]);
+	}
+
+	for (int c= 0; c < NUM_CLASSES; c++) {
+		for (size_t i = 0; i < indices[c].size(); ++i) {
+			const auto color = colors[c % NUM_COLORS];
+
+			auto idx = indices[c][i];
+			const auto& rect = boxes[c][idx];
+			cv::rectangle(frame, cv::Point(rect.x, rect.y), cv::Point(rect.x + rect.width, rect.y + rect.height), color, 3);
+
+			std::ostringstream label_ss;
+			label_ss << classes[c] << ": " << std::fixed << std::setprecision(2) << scores[c][idx];
+			auto label = label_ss.str();
+
+			//std::cout << "label: " << label << std::endl; 
+
+			int baseline;
+			auto label_bg_sz = cv::getTextSize(label.c_str(), cv::FONT_HERSHEY_COMPLEX_SMALL, 1, 1, &baseline);
+			cv::rectangle(
+				frame, 
+				cv::Point(rect.x, rect.y - label_bg_sz.height - baseline - 10), 
+				cv::Point(rect.x + label_bg_sz.width, rect.y), 
+				color, 
+				cv::FILLED
+			);
+			//std::cout << "baseline: " << baseline << std::endl;
+			cv::putText(
+				frame, 
+				label.c_str(), 
+				cv::Point(rect.x, rect.y - baseline - 5), 
+				cv::FONT_HERSHEY_COMPLEX_SMALL, 
+				1, 
+				cv::Scalar(0, 0, 0)
+			);
+		}
+	}
+	
 
         auto frameEnd = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> frameDuration = frameEnd - frameStart;
@@ -130,7 +211,7 @@ int main() {
         }        
 
 
-        if(cv::waitKey(10) == 27) { break; }
+        if(cv::waitKey(1) == 27) { break; }
     }
 
     cam.release();
