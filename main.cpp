@@ -11,7 +11,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#define VIDEO_OUT "/dev/video9"
+#define VIDEO_OUT "/dev/video8"
 
 //const std::string MODEL_CONFIG = "./darknet/cfg/yolov3.cfg";
 //const std::string MODEL_WEIGHTS =  "./darknet/yolov3.weights";
@@ -63,7 +63,17 @@ int main() {
     if(!cam.isOpened()) { exit(1); }
     cam.set(cv::CAP_PROP_FRAME_WIDTH, FRAME_WIDTH);
     cam.set(cv::CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT);
+    //cam.set(cv::CAP_PROP_CONVERT_RGB, 1);
+
+
+    std::cout << "cam settings" << std::endl;
+    std::cout << "===============" << std::endl;
     std::cout << "cam is opened" << std::endl;
+    std::cout << "cam mode: " << cam.get(cv::CAP_PROP_MODE) << std::endl;
+    std::cout << "cam format: " << cam.get(cv::CAP_PROP_FORMAT) << std::endl;
+    std::cout << "cam settings " << cam.get(cv::CAP_PROP_SETTINGS) << std::endl;
+    std::cout << "===============" << std::endl;
+
 
     // open and configure output (virtual webcam)
     int output = open(VIDEO_OUT, O_RDWR);
@@ -85,6 +95,7 @@ int main() {
     vid_format.fmt.pix.width = FRAME_WIDTH;                                     
     vid_format.fmt.pix.height = FRAME_HEIGHT;                                   
     vid_format.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;                        
+    //vid_format.fmt.pix.pixelformat = V4L2_PIX_FMT_BGR24;                        
     vid_format.fmt.pix.sizeimage = framesize;                                   
     vid_format.fmt.pix.field = V4L2_FIELD_NONE;                                 
 
@@ -99,8 +110,8 @@ int main() {
     cv::Mat blob;
     std::vector<cv::Mat> detections;
     while (1) {
-        //cv::Mat frame;
         cam >> frame;
+	cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
         //std::cout << "dims: (" << width << "|" << height << ")" << std::endl; 
 
         //static cv::Mat blob;
