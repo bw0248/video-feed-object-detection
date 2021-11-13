@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-
-gst-launch-1.0 videotestsrc ! v4l2sink device=/dev/video9

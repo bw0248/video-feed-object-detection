@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+
+VIRTUAL_CAM_NAME='vfod-cam'
+VIRTUAL_CAM_DEVICE_NUM='9'
+
+function fail() {
+    echo $1
+    exit 1
+}
+
+cd "$(dirname "$0")"
+
+declare -A resources
+resources['yolov3-tiny.cfg']='https://raw.githubusercontent.com/pjreddie/darknet/master/cfg/yolov3-tiny.cfg'
+resources['yolov3-tiny.weights']='https://pjreddie.com/media/files/yolov3-tiny.weights'
+resources['yolov3.cfg']='https://raw.githubusercontent.com/pjreddie/darknet/master/cfg/yolov3.cfg'
+resources['yolov3.weights']='https://pjreddie.com/media/files/yolov3.weights'
+resources['coco.names']='https://raw.githubusercontent.com/pjreddie/darknet/master/data/coco.names'
+
+mkdir -p models && cd models
+
+echo "downloading models"
+for resource in "${!resources[@]}"
+do
+    if [ ! -f "$resource" ]
+    then
+        curl --fail -o "$resource" "${resources[$resource]}" \
+            || fail "failed to dowload resource $resource  from ${resources[$resource]}"
+    fi
+done
+
+echo "building project"
+cd ..
+mkdir -p build && cd build
+cmake .. || fail "failed to build project"
+cmake --build . --config release || fail "failed to build project"
+
+echo "preparing virtual cam"
+if [[ -z $(v4l2-ctl --list-devices | grep "$VIRTUAL_CAM_NAME") ]]
+then
+    echo "creating virtual cam"
+    sudo modprobe v4l2loopback \
+        devices=1 \
+        video_nr=$VIRTUAL_CAM_DEVICE_NUM \
+        card_label=$VIRTUAL_CAM_NAME \
+        exclusive_caps=1 || fail "could not create virtual cam"
+fi
+configured_cam_device=$(v4l2-ctl --list-devices \
+    | grep -A 2 "$VIRTUAL_CAM_NAME" \
+    | grep -Eo "/dev/video(.*)")
+
+if test -z "$configured_cam_device"
+then
+    echo "could not configure virtual webcam, exiting"
+    exit 1
+fi
+
+./vfod "$configured_cam_device"
+cd ..
+
