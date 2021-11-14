@@ -28,8 +28,8 @@ $ cd video-feed-object-detection/
 
 $ ./run [--dev WEBCAM_DEVICE] [--virtual-dev VIRTUAL_CAM_DEVICE] [--tiny] [--gui] [--fps]
 
-   --dev            which webcam to use (defaults to `/dev/video0`)
-   --virtual-dev    virtual webcam to use/create (defaults to `/dev/video99`)
+   --dev            which webcam to use (defaults to /dev/video0)
+   --virtual-dev    virtual webcam to use/create (defaults to /dev/video99)
    --tiny           use tiny model (more fps, less accuracy)
    --gui            show simple opencv gui of actual webcam feed (w/o annotations) 
    --fps            show fps in overlay
@@ -37,7 +37,7 @@ $ ./run [--dev WEBCAM_DEVICE] [--virtual-dev VIRTUAL_CAM_DEVICE] [--tiny] [--gui
 
 ## Usage
 
-Examples (replace $VIRTUAL_DEV with the configured virtual device, default is /dev/video99)
+Examples (replace `$VIRTUAL_DEV` with the configured virtual device, default is `/dev/video99`)
 
 * `ffplay $VIRTUAL_DEV`
 * `cheese -d vfod-cam`

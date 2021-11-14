@@ -10,11 +10,12 @@
 #include <sys/ioctl.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <algorithm>
 
-//const std::string MODEL_CONFIG = "./darknet/cfg/yolov3.cfg";
-//const std::string MODEL_WEIGHTS =  "./darknet/yolov3.weights";
-const std::string MODEL_CONFIG = "../models/yolov3-tiny.cfg";
-const std::string MODEL_WEIGHTS =  "../models/yolov3-tiny.weights";
+const std::string MODEL_CONFIG = "../models/yolov3.cfg";
+const std::string MODEL_WEIGHTS =  "../models/yolov3.weights";
+const std::string MODEL_CONFIG_TINY = "../models/yolov3-tiny.cfg";
+const std::string MODEL_WEIGHTS_TINY =  "../models/yolov3-tiny.weights";
 
 const int FRAME_WIDTH = 640;
 const int FRAME_HEIGHT = 480;
@@ -32,13 +33,49 @@ const cv::Scalar colors[] = {
 
 const auto NUM_COLORS = sizeof(colors)/sizeof(colors[0]);
 
+char* getCmdOption(char** start, char** end, const std::string& option) {
+    char** itr = std::find(start, end, option);
+    if (itr != end && ++itr != end) {
+        return *itr;
+    }
+    return 0;
+}
+
+bool findCmdOption(char** start, char** end, const std::string& option) {
+    return std::find(start, end, option) != end;
+}
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cout << "please supply virtual cam device '/dev/videoX'" << std::endl;
+    const std::string modelConfig = MODEL_CONFIG;
+    const std::string modelWeights = MODEL_WEIGHTS;
+    if (findCmdOption(argv, argv + argc, "--tiny")) {
+        std::cout << "using tiny model for detection" << std::endl;
+        const std::string modelConfig = MODEL_CONFIG_TINY;
+        const std::string modelWeights = MODEL_WEIGHTS_TINY;
+    }
+
+    bool gui = false;
+    if (findCmdOption(argv, argv + argc, "--gui")) {
+        gui = true;
+    }
+
+    bool fps = false;
+    if (findCmdOption(argv, argv + argc, "--fps")) {
+        fps = true;
+    }
+
+    std::string webcamDev = "/dev/video0";
+    char* webcamDevOption = getCmdOption(argv, argv + argc, "--dev");
+    if (webcamDevOption) {
+        webcamDev = webcamDevOption;
+        std::cout << "using " << webcamDev << " for capturing" << std::endl;
+    }
+
+    if (!findCmdOption(argv, argv + argc, "--virtual-dev")) {
+        std::cout << "need to supply virtual device, exiting" << std::endl;
         return 1;
     }
-    char* virtualCamDev = argv[1];
+    char* virtualCamDev = (getCmdOption(argv, argv + argc, "--virtual-dev"));
     std::cout << "using " << virtualCamDev << " as virtual cam" << std::endl;
 
     float confThreshold = 0.5;
@@ -52,18 +89,22 @@ int main(int argc, char** argv) {
     while (getline(ifs, line)) { classes.push_back(line); }
 
     //std::cout << "read " << classes.size() << " labels" << std::endl;
-    //std::cout << "config: " << MODEL_CONFIG << std::endl;
-    //std::cout << "weights: " << MODEL_WEIGHTS << std::endl;
+    //std::cout << "config: " << modelConfig << std::endl;
+    //std::cout << "weights: " << modelWeights << std::endl;
 
-    cv::dnn::Net net = cv::dnn::readNetFromDarknet(MODEL_CONFIG, MODEL_WEIGHTS);
+    cv::dnn::Net net = cv::dnn::readNetFromDarknet(modelConfig, modelWeights);
 
     // try to use gpu ,fall back to cpu if gpu can't be accessed
     net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
     net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
 
     // Opencv videocapture - default color format is 24bit BGR
-    cv::VideoCapture cam(0);
-    if(!cam.isOpened()) { exit(1); }
+    //cv::VideoCapture cam(webcamDev);
+    cv::VideoCapture cam(webcamDev);
+    if(!cam.isOpened()) {
+        std::cout << "could not open webcam device " << webcamDev << " exiting" << std::endl;
+        exit(1);
+    }
     cam.set(cv::CAP_PROP_FRAME_WIDTH, FRAME_WIDTH);
     cam.set(cv::CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT);
     cam.set(cv::CAP_PROP_CONVERT_RGB, 1);
@@ -104,7 +145,9 @@ int main(int argc, char** argv) {
 
     while (1) {
         cam >> frame;
-        cv::imshow("cam", frame);
+        if (gui) {
+            cv::imshow("cam", frame);
+        }
 
         cv::dnn::blobFromImage(
                 frame,
@@ -117,7 +160,6 @@ int main(int argc, char** argv) {
                 CV_32F
                 );
 
-        // propagate through network
         net.setInput(blob);
         net.forward(detections, outputNames);
 
@@ -180,23 +222,26 @@ int main(int argc, char** argv) {
             }
         }
 
+        // annotate fps
+        if (fps) {
+            auto frameEnd = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> frameDuration = frameEnd - frameStart;
+            frameStart = frameEnd;
+            int fps = (1/(frameDuration.count()));
 
-        auto frameEnd = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> frameDuration = frameEnd - frameStart;
-        frameStart = frameEnd;
-        int fps = (1/(frameDuration.count()));
+            cv::putText(
+                    frame,
+                    std::to_string(fps),
+                    cv::Point(30, 30),
+                    cv::FONT_HERSHEY_PLAIN,
+                    1,
+                    CV_RGB(100, 255, 0),
+                    1,
+                    cv::LINE_AA
+                    );
+        }
 
-        cv::putText(
-                frame,
-                std::to_string(fps),
-                cv::Point(30, 30),
-                cv::FONT_HERSHEY_PLAIN,
-                1,
-                CV_RGB(100, 255, 0),
-                1,
-                cv::LINE_AA
-                );
-
+        // convert frame to RGB and write to virtual cam
         cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
         size_t written = write(output, frame.data, framesize);
         if (written < 0) {
